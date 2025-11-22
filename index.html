@@ -114,7 +114,15 @@ const camera=new Camera(video,{
   width:480,
   height:360
 });
-camera.start();
+  
+setInterval(() => {
+  if (video.readyState < 2) {
+    camera.stop();
+    camera.start();
+  }
+}, 3000);
+
 </script>
 </body>
+
 </html>
