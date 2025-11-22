@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hand Detection Desktop Lite</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<style>
+body { margin:0; background:#111; color:#fff; display:flex; flex-direction:column; align-items:center;}
+video, canvas { width:480px; height:360px; position:absolute; top:0; left:0; }
+.stage { position:relative; width:480px; height:360px; }
+.debug { margin-top:380px; font-family:monospace; background:#222; padding:8px; border-radius:6px; width:460px;}
+</style>
+</head>
+<body>
+
+<h2>Hand Detection Desktop Lite</h2>
+<div class="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+</div>
+<div class="debug" id="debug">Waiting...</div>
+
+<script>
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const debug=document.getElementById('debug');
+
+// ฟังก์ชันวัดมุม 3 จุด
+function angleDeg(a,b,c){
+  const ab={x:a.x-b.x,y:a.y-b.y};
+  const cb={x:c.x-b.x,y:c.y-b.y};
+  const dot=ab.x*cb.x + ab.y*cb.y;
+  const magA=Math.hypot(ab.x,ab.y);
+  const magC=Math.hypot(cb.x,cb.y);
+  const cos=Math.min(1,Math.max(-1,dot/(magA*magC || 1e-6)));
+  return Math.acos(cos)*180/Math.PI;
+}
+
+// นิ้วที่ชูขึ้น
+function getRaised(lm,handedness){
+  const tips=[4,8,12,16,20];
+  const pips=[3,6,10,14,18];
+  const raised=[];
+  for(let i=1;i<=4;i++){ if(lm[tips[i]].y<lm[pips[i]].y) raised.push(i);}
+  const tip=lm[4], ip=lm[3];
+  if(handedness==='Right'){ if(tip.x<ip.x) raised.push(0); }
+  else { if(tip.x>ip.x) raised.push(0);}
+  return raised;
+}
+
+// Gesture detection
+function detectGesture(raised,lm){
+  const count=raised.length;
+  if(count===5) return '🖐️ Five';
+  if(count===0) return '✊ Fist';
+  if(count===2 && raised.includes(1) && raised.includes(2)) return '✌️ Peace';
+  if(count===1 && raised.includes(0)) return '👍 Like';
+  if(count===1 && raised.includes(1)) return '👉 Point';
+  if(lm){ const dx=lm[4].x-lm[8].x; const dy=lm[4].y-lm[8].y; if(Math.hypot(dx,dy)<0.05) return '👌 OK';}
+  return 'Unknown';
+}
+
+// Render
+function renderResults(image, multiHandLandmarks, multiHandedness){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(image,0,0,canvas.width,canvas.height);
+  if(!multiHandLandmarks || multiHandLandmarks.length===0){ return; }
+
+  for(let i=0;i<multiHandLandmarks.length;i++){
+    const lm=multiHandLandmarks[i];
+    const handClass=multiHandedness[i].label;
+    drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:'#FF2C55',lineWidth:2});
+    drawLandmarks(ctx,lm,{color:'#00FFAB',radius:3});
+
+    const raised=getRaised(lm,handClass);
+    const gesture=detectGesture(raised,lm);
+    const angIndexPIP=angleDeg(lm[6],lm[7],lm[8]);
+
+    debug.innerText=`Hand ${i+1} (${handClass}) — Fingers:${raised.length} — ${gesture}\nIdxAngle:${angIndexPIP.toFixed(0)}°`;
+  }
+}
+
+// MediaPipe Hands
+const hands=new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({
+  maxNumHands:1,            // มือเดียว ลื่นกว่า
+  modelComplexity:0,        // เบาลง
+  minDetectionConfidence:0.5,
+  minTrackingConfidence:0.5
+});
+hands.onResults(results=>{
+  const multiHandLandmarks = results.multiHandLandmarks || [];
+  const multiHandedness = (results.multiHandedness || []).map(h=>({label:h.classification[0].label}));
+  renderResults(results.image,multiHandLandmarks,multiHandedness);
+});
+
+// Camera throttled FPS
+let lastTime=0;
+const targetFPS=15;
+const camera=new Camera(video,{
+  onFrame:async()=>{
+    const now=performance.now();
+    if(now-lastTime>1000/targetFPS){
+      await hands.send({image:video});
+      lastTime=now;
+    }
+  },
+  width:480,
+  height:360
+});
+camera.start();
+</script>
+</body>
+</html>
